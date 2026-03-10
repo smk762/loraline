@@ -1,0 +1,17 @@
+services:
+  # Cloudflare-only overlay: remove the LAN host port and publish through Tunnel.
+  self-lora:
+    ports: []
+
+  cloudflared:
+    image: cloudflare/cloudflared:2025.1.0
+    env_file:
+      - ./.env
+    command: >
+      tunnel
+      --no-autoupdate
+      run
+      --token ${CLOUDFLARED_TUNNEL_TOKEN}
+    depends_on:
+      - self-lora
+    restart: unless-stopped
