@@ -129,11 +129,10 @@ class MockImageLoraProvider:
 
 
 class ExternalCommandProvider:
-    name = "external-command"
-    description = "Delegate to a real trainer wrapper specified by environment."
-
-    def __init__(self, env_var: str = "SELF_LORA_IMAGE_LORA_COMMAND") -> None:
+    def __init__(self, name: str, env_var: str, description: str) -> None:
+        self.name = name
         self.env_var = env_var
+        self.description = description
 
     def run(self, job_spec: JobSpec, result_path: Path) -> ProviderResult:
         command_text = os.getenv(self.env_var, "").strip()
@@ -189,7 +188,21 @@ def resolve_provider_name(job_spec: JobSpec, explicit_provider: str | None) -> s
 def provider_registry() -> dict[str, TrainerProvider]:
     return {
         "mock-image-lora": MockImageLoraProvider(),
-        "external-command": ExternalCommandProvider(),
+        "external-command": ExternalCommandProvider(
+            "external-command",
+            "SELF_LORA_IMAGE_LORA_COMMAND",
+            "Backward-compatible alias for the image external trainer wrapper.",
+        ),
+        "external-image-command": ExternalCommandProvider(
+            "external-image-command",
+            "SELF_LORA_IMAGE_LORA_COMMAND",
+            "Delegate image LoRA jobs to the configured image wrapper command.",
+        ),
+        "external-video-command": ExternalCommandProvider(
+            "external-video-command",
+            "SELF_LORA_VIDEO_LORA_COMMAND",
+            "Delegate video LoRA jobs to the configured video wrapper command.",
+        ),
     }
 
 

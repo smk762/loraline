@@ -54,6 +54,13 @@ CI:
 - GitHub Actions performs a Docker build smoke test for the production image
 - GitHub Actions runs Trivy filesystem and container image scans for high and critical issues
 
+API capabilities:
+
+- `POST /v1/lora/jobs` and `GET /v1/lora/jobs/{job_id}` handle LoRA training jobs
+- `POST /v1/image/jobs` and `GET /v1/image/jobs/{job_id}` proxy async image generation jobs to the `imogen` gateway
+- `POST /v1/video/jobs` and `GET /v1/video/jobs/{job_id}` proxy async video generation jobs to the `vidita` gateway
+- LoRA training modality routing uses `metadata.modality=image|video` and dispatches through `trainers/router.py`
+
 Connectivity check:
 
 ```bash
@@ -84,6 +91,7 @@ Notes:
 - This overlay removes the normal host port binding and publishes through `cloudflared`.
 - Add `CLOUDFLARED_TUNNEL_TOKEN` to `.env` before using it.
 - See `docs/cloudflare-zero-trust.md` for the tunnel-only and LAN-plus-tunnel options.
+- Self-hosted image/video gateway env settings are included in `.env.example` and passed through `compose.yaml`.
 
 Agent-composer internal/LAN guidance:
 
@@ -98,11 +106,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now self-lora
 ```
 
-Suggested next implementation steps inside `service.py`:
+Current trainer routing notes:
 
-1. Point `SELF_LORA_TRAINER_PROVIDER=external-command`.
-2. Set `SELF_LORA_IMAGE_LORA_BACKEND_COMMAND` to a real trainer wrapper such as `python3 /opt/self-lora/trainers/kohya_wrapper.py`.
-3. Set `SELF_LORA_VIDEO_LORA_BACKEND_COMMAND` once your local video stack is ready.
+1. Keep `SELF_LORA_TRAINER_COMMAND="python3 /srv/self-lora/trainers/router.py"` as the stable entrypoint.
+2. Use request `metadata.modality=image|video` to select the correct LoRA wrapper.
+3. Set `SELF_LORA_IMAGE_LORA_BACKEND_COMMAND` and `SELF_LORA_VIDEO_LORA_BACKEND_COMMAND` to real training backends when they are available.
 
 Trainer router examples:
 
@@ -113,9 +121,14 @@ SELF_LORA_TRAINER_PROVIDER=mock-image-lora
 
 # delegate to a real wrapper
 SELF_LORA_TRAINER_COMMAND="python3 /srv/self-lora/trainers/router.py"
-SELF_LORA_TRAINER_PROVIDER=external-command
+SELF_LORA_TRAINER_PROVIDER=external-image-command
 SELF_LORA_IMAGE_LORA_COMMAND="python3 /srv/self-lora/trainers/image_lora_wrapper.py"
 SELF_LORA_IMAGE_LORA_BACKEND_COMMAND="python3 /opt/self-lora/trainers/kohya_wrapper.py"
+
+# video LoRA routing
+SELF_LORA_TRAINER_COMMAND="python3 /srv/self-lora/trainers/router.py"
+SELF_LORA_VIDEO_LORA_COMMAND="python3 /srv/self-lora/trainers/video_lora_wrapper.py"
+SELF_LORA_VIDEO_LORA_BACKEND_COMMAND="python3 /opt/self-lora/trainers/video_lora_backend.py"
 ```
 
 Wrapper toolkit:

@@ -107,6 +107,27 @@ class Settings:
     ollama_base_url: str
     ollama_timeout_seconds: float
     trainer_command: str
+    image_backend: str
+    image_api_base_url: str
+    image_api_key: str
+    image_api_generate_path: str
+    image_api_img2img_path: str
+    image_api_jobs_path: str
+    image_api_timeout_seconds: float
+    image_api_job_timeout_seconds: float
+    image_api_job_poll_interval_seconds: float
+    image_api_auth_header: str
+    image_api_auth_scheme: str
+    video_backend: str
+    video_api_base_url: str
+    video_api_key: str
+    video_api_generate_path: str
+    video_api_jobs_path: str
+    video_api_timeout_seconds: float
+    video_api_job_timeout_seconds: float
+    video_api_job_poll_interval_seconds: float
+    video_api_auth_header: str
+    video_api_auth_scheme: str
     s3_endpoint_url: str
     s3_access_key_id: str
     s3_secret_access_key: str
@@ -114,7 +135,9 @@ class Settings:
     s3_region: str
     cdn_base_url: str
     chat_worker_count: int
+    image_worker_count: int
     lora_worker_count: int
+    video_worker_count: int
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -147,6 +170,29 @@ class Settings:
             ollama_base_url=os.getenv("SELF_LORA_OLLAMA_BASE_URL", "http://192.168.1.109:11434").rstrip("/"),
             ollama_timeout_seconds=float(os.getenv("SELF_LORA_OLLAMA_TIMEOUT_SECONDS", "120")),
             trainer_command=os.getenv("SELF_LORA_TRAINER_COMMAND", "").strip(),
+            image_backend=os.getenv("IMAGE_BACKEND", "").strip(),
+            image_api_base_url=os.getenv("IMAGE_API_BASE_URL", "").rstrip("/"),
+            image_api_key=os.getenv("IMAGE_API_KEY", ""),
+            image_api_generate_path=os.getenv("IMAGE_API_GENERATE_PATH", "/images/generate"),
+            image_api_img2img_path=os.getenv("IMAGE_API_IMG2IMG_PATH", "/images/img2img"),
+            image_api_jobs_path=os.getenv("IMAGE_API_JOBS_PATH", "/images/jobs"),
+            image_api_timeout_seconds=float(os.getenv("IMAGE_API_TIMEOUT_MS", "120000")) / 1000.0,
+            image_api_job_timeout_seconds=float(os.getenv("IMAGE_API_JOB_TIMEOUT_MS", "300000")) / 1000.0,
+            image_api_job_poll_interval_seconds=float(os.getenv("IMAGE_API_JOB_POLL_INTERVAL_MS", "2000"))
+            / 1000.0,
+            image_api_auth_header=os.getenv("IMAGE_API_AUTH_HEADER", "Authorization"),
+            image_api_auth_scheme=os.getenv("IMAGE_API_AUTH_SCHEME", "Bearer"),
+            video_backend=os.getenv("VIDEO_BACKEND", "").strip(),
+            video_api_base_url=os.getenv("VIDEO_API_BASE_URL", "").rstrip("/"),
+            video_api_key=os.getenv("VIDEO_API_KEY", ""),
+            video_api_generate_path=os.getenv("VIDEO_API_GENERATE_PATH", "/videos/generate"),
+            video_api_jobs_path=os.getenv("VIDEO_API_JOBS_PATH", "/videos/jobs"),
+            video_api_timeout_seconds=float(os.getenv("VIDEO_API_TIMEOUT_MS", "120000")) / 1000.0,
+            video_api_job_timeout_seconds=float(os.getenv("VIDEO_API_JOB_TIMEOUT_MS", "600000")) / 1000.0,
+            video_api_job_poll_interval_seconds=float(os.getenv("VIDEO_API_JOB_POLL_INTERVAL_MS", "3000"))
+            / 1000.0,
+            video_api_auth_header=os.getenv("VIDEO_API_AUTH_HEADER", "Authorization"),
+            video_api_auth_scheme=os.getenv("VIDEO_API_AUTH_SCHEME", "Bearer"),
             s3_endpoint_url=os.getenv("SELF_LORA_S3_ENDPOINT_URL") or os.getenv("S3_ENDPOINT_URL", ""),
             s3_access_key_id=os.getenv("SELF_LORA_S3_ACCESS_KEY_ID")
             or os.getenv("S3_ACCESS_KEY_ID", ""),
@@ -156,7 +202,9 @@ class Settings:
             s3_region=os.getenv("SELF_LORA_S3_REGION") or os.getenv("S3_REGION", "us-east-1"),
             cdn_base_url=os.getenv("SELF_LORA_CDN_BASE_URL") or os.getenv("CDN_BASE_URL", ""),
             chat_worker_count=int(os.getenv("SELF_LORA_CHAT_WORKER_COUNT", "1")),
+            image_worker_count=int(os.getenv("SELF_LORA_IMAGE_WORKER_COUNT", "1")),
             lora_worker_count=int(os.getenv("SELF_LORA_LORA_WORKER_COUNT", "1")),
+            video_worker_count=int(os.getenv("SELF_LORA_VIDEO_WORKER_COUNT", "1")),
         )
 
 
@@ -276,6 +324,41 @@ class CreateChatJobRequest(BaseModel):
     provider_hint: str | None = Field(default="chat.ollama", max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateImageJobRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    companion_id: str | None = Field(default=None, max_length=64)
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    model: str = Field(..., min_length=1, max_length=128)
+    negative_prompt: str | None = Field(default=None, max_length=4000)
+    width: int | None = Field(default=None, ge=64, le=4096)
+    height: int | None = Field(default=None, ge=64, le=4096)
+    num_images: int | None = Field(default=None, ge=1, le=8)
+    seed: int | None = None
+    nsfw: bool | None = None
+    guidance_scale: float | None = Field(default=None, ge=0, le=50)
+    num_inference_steps: int | None = Field(default=None, ge=1, le=250)
+    lora_id: str | None = Field(default=None, max_length=255)
+    lora_url: str | None = Field(default=None, max_length=2000)
+    lora_weights_url: str | None = Field(default=None, max_length=2000)
+    weights_url: str | None = Field(default=None, max_length=2000)
+    lora_strength: float | None = Field(default=None, ge=0, le=2)
+    style_preset: str | None = Field(default=None, max_length=128)
+    source_image_url: str | None = Field(default=None, max_length=2000)
+    strength: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateVideoJobRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=64)
+    companion_id: str | None = Field(default=None, max_length=64)
+    prompt: str = Field(..., min_length=1, max_length=500)
+    model: str = Field(..., min_length=1, max_length=128)
+    duration: str = Field(..., pattern=r"^\d+s$")
+    quality: str = Field(default="standard", pattern=r"^(draft|standard|high)$")
+    source_image_url: str | None = Field(default=None, max_length=2000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AcceptedJobResponse(BaseModel):
@@ -447,6 +530,10 @@ class LocalLoraTrainerProvider:
                     }
                 )
 
+            request_metadata = dict(request_payload.get("metadata") or {})
+            modality = _resolve_lora_modality(request_payload)
+            request_metadata.setdefault("modality", modality)
+            request_metadata.setdefault("trainer_provider", _trainer_provider_for_modality(request_metadata))
             spec_payload = {
                 "job_id": job["id"],
                 "user_id": job["user_id"],
@@ -458,7 +545,7 @@ class LocalLoraTrainerProvider:
                 "dataset_dir": str(dataset_dir),
                 "dataset_urls": request_payload["dataset_urls"],
                 "output_dir": str(outputs_dir),
-                "metadata": request_payload.get("metadata", {}),
+                "metadata": request_metadata,
             }
             manifest_path.write_text(json.dumps(spec_payload, indent=2), encoding="utf-8")
             command = shlex.split(runtime.settings.trainer_command) + [
@@ -566,6 +653,221 @@ class OllamaChatProvider:
         return ProviderResult(status="completed", progress_pct=100, result=result)
 
 
+def _resolve_lora_modality(payload: dict[str, Any]) -> str:
+    metadata = dict(payload.get("metadata") or {})
+    modality = str(metadata.get("modality") or "").strip().lower()
+    return "video" if modality == "video" else "image"
+
+
+def _trainer_provider_for_modality(metadata: dict[str, Any]) -> str:
+    explicit = str(metadata.get("trainer_provider") or "").strip()
+    if explicit:
+        return explicit
+    default_provider = os.getenv("SELF_LORA_TRAINER_PROVIDER", "mock-image-lora").strip() or "mock-image-lora"
+    modality = str(metadata.get("modality") or "image").strip().lower()
+    if default_provider == "external-command":
+        return "external-video-command" if modality == "video" else "external-image-command"
+    if modality == "video" and default_provider in {"mock-image-lora", "external-image-command"}:
+        return "external-video-command"
+    return default_provider
+
+
+def _join_url(base_url: str, path: str) -> str:
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _build_api_headers(auth_header: str, auth_scheme: str, api_key: str, *, idempotency_key: str) -> dict[str, str]:
+    headers = {"Idempotency-Key": idempotency_key}
+    if api_key:
+        headers[auth_header] = f"{auth_scheme} {api_key}"
+    return headers
+
+
+def _poll_remote_job(
+    client: httpx.Client,
+    *,
+    status_url: str,
+    poll_interval_seconds: float,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    started_at = time.monotonic()
+    terminal_statuses = {"completed", "failed", "dead_letter", "cancelled"}
+    while True:
+        response = client.get(status_url)
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("status") in terminal_statuses:
+            return payload
+        if time.monotonic() - started_at > timeout_seconds:
+            raise TimeoutError(f"Timed out waiting for remote job at {status_url}")
+        time.sleep(poll_interval_seconds)
+
+
+def _accepted_job_id(payload: dict[str, Any]) -> str:
+    job_id = payload.get("id")
+    if not job_id:
+        raise RuntimeError("Remote service accepted the job without returning an id")
+    return str(job_id)
+
+
+class SelfHostedImageProvider:
+    capability = ProviderCapability(
+        provider_key="image.selfhosted",
+        job_kind="image",
+        job_types=["generate"],
+        operations=["generate_image", "image_to_image"],
+        max_concurrency=1,
+        supports_cancel=False,
+        supports_poll=True,
+        metadata={"base_url_env": "IMAGE_API_BASE_URL"},
+    )
+
+    def validate(self, payload: dict[str, Any], settings: Settings) -> None:
+        if not settings.image_api_base_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="IMAGE_API_BASE_URL is not configured",
+            )
+        if settings.image_backend and settings.image_backend != "selfhosted":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported IMAGE_BACKEND '{settings.image_backend}'",
+            )
+        if payload.get("source_image_url") and not settings.image_api_img2img_path:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="IMAGE_API_IMG2IMG_PATH is not configured",
+            )
+
+    def execute(self, runtime: Runtime, job: dict[str, Any]) -> ProviderResult:
+        payload = dict(job["request_json"])
+        request_body = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "user_id",
+                "companion_id",
+                "metadata",
+            }
+            and value is not None
+        }
+        submit_path = (
+            runtime.settings.image_api_img2img_path
+            if payload.get("source_image_url")
+            else runtime.settings.image_api_generate_path
+        )
+        submit_url = _join_url(runtime.settings.image_api_base_url, submit_path)
+        headers = _build_api_headers(
+            runtime.settings.image_api_auth_header,
+            runtime.settings.image_api_auth_scheme,
+            runtime.settings.image_api_key,
+            idempotency_key=job["id"],
+        )
+        with httpx.Client(timeout=runtime.settings.image_api_timeout_seconds) as client:
+            response = client.post(submit_url, json=request_body, headers=headers)
+            response.raise_for_status()
+            accepted = response.json()
+            provider_job_id = _accepted_job_id(accepted)
+            final_payload = _poll_remote_job(
+                client,
+                status_url=_join_url(runtime.settings.image_api_base_url, f"{runtime.settings.image_api_jobs_path}/{provider_job_id}"),
+                poll_interval_seconds=runtime.settings.image_api_job_poll_interval_seconds,
+                timeout_seconds=runtime.settings.image_api_job_timeout_seconds,
+            )
+        result = dict(final_payload.get("result") or {})
+        images = list(result.get("images") or [])
+        if images:
+            result.setdefault("primary_image_url", images[0].get("url"))
+            result.setdefault("thumbnail_url", images[0].get("thumbnail_url"))
+        return ProviderResult(
+            status=final_payload.get("status", "completed"),
+            progress_pct=int(final_payload.get("progress_pct", 100)),
+            result=result,
+            provider_job_id=provider_job_id,
+            provider_metadata={
+                "provider": self.capability.provider_key,
+                "upstream_job_id": provider_job_id,
+                "base_url": runtime.settings.image_api_base_url,
+                "submit_path": submit_path,
+            },
+            error_message=final_payload.get("error_message"),
+        )
+
+
+class SelfHostedVideoProvider:
+    capability = ProviderCapability(
+        provider_key="video.selfhosted",
+        job_kind="video",
+        job_types=["generate"],
+        operations=["generate_video", "image_to_video"],
+        max_concurrency=1,
+        supports_cancel=False,
+        supports_poll=True,
+        metadata={"base_url_env": "VIDEO_API_BASE_URL"},
+    )
+
+    def validate(self, payload: dict[str, Any], settings: Settings) -> None:
+        if not settings.video_api_base_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="VIDEO_API_BASE_URL is not configured",
+            )
+        if settings.video_backend and settings.video_backend != "selfhosted":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported VIDEO_BACKEND '{settings.video_backend}'",
+            )
+
+    def execute(self, runtime: Runtime, job: dict[str, Any]) -> ProviderResult:
+        payload = dict(job["request_json"])
+        request_body = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "user_id",
+                "companion_id",
+                "metadata",
+            }
+            and value is not None
+        }
+        submit_url = _join_url(runtime.settings.video_api_base_url, runtime.settings.video_api_generate_path)
+        headers = _build_api_headers(
+            runtime.settings.video_api_auth_header,
+            runtime.settings.video_api_auth_scheme,
+            runtime.settings.video_api_key,
+            idempotency_key=job["id"],
+        )
+        with httpx.Client(timeout=runtime.settings.video_api_timeout_seconds) as client:
+            response = client.post(submit_url, json=request_body, headers=headers)
+            response.raise_for_status()
+            accepted = response.json()
+            provider_job_id = _accepted_job_id(accepted)
+            final_payload = _poll_remote_job(
+                client,
+                status_url=_join_url(runtime.settings.video_api_base_url, f"{runtime.settings.video_api_jobs_path}/{provider_job_id}"),
+                poll_interval_seconds=runtime.settings.video_api_job_poll_interval_seconds,
+                timeout_seconds=runtime.settings.video_api_job_timeout_seconds,
+            )
+        result = dict(final_payload.get("result") or {})
+        return ProviderResult(
+            status=final_payload.get("status", "completed"),
+            progress_pct=int(final_payload.get("progress_pct", 100)),
+            result=result,
+            provider_job_id=provider_job_id,
+            provider_metadata={
+                "provider": self.capability.provider_key,
+                "upstream_job_id": provider_job_id,
+                "base_url": runtime.settings.video_api_base_url,
+                "submit_path": runtime.settings.video_api_generate_path,
+            },
+            error_message=final_payload.get("error_message"),
+        )
+
+
 def _hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -600,7 +902,9 @@ def _build_request_hash(job_kind: str, auth_scope_hash: str, payload: dict[str, 
 def _estimated_wait_seconds(settings: Settings, job_kind: str, queue_position: int) -> int:
     if job_kind == "chat":
         return max(settings.default_chat_wait_seconds, queue_position * settings.default_chat_wait_seconds)
-    return max(1, queue_position * settings.default_lora_duration_minutes * 60)
+    if job_kind == "lora":
+        return max(1, queue_position * settings.default_lora_duration_minutes * 60)
+    return 0
 
 
 def _estimated_duration_minutes(settings: Settings, payload: dict[str, Any]) -> int:
@@ -612,7 +916,9 @@ def _estimated_duration_minutes(settings: Settings, payload: dict[str, Any]) -> 
 def _cost_gems(settings: Settings, job_kind: str) -> int:
     if job_kind == "chat":
         return settings.default_chat_cost_gems
-    return settings.default_lora_cost_gems
+    if job_kind == "lora":
+        return settings.default_lora_cost_gems
+    return 0
 
 
 def _provider_from_job(runtime: Runtime, job: dict[str, Any]) -> Provider:
@@ -663,6 +969,51 @@ def _normalize_chat_result(job: dict[str, Any]) -> dict[str, Any]:
         "error_message": job["error_message"],
         "created_at": _isoformat(job["created_at"]),
         "updated_at": _isoformat(job["updated_at"]),
+    }
+
+
+def _normalize_image_result(job: dict[str, Any]) -> dict[str, Any]:
+    result = dict(job.get("result_json") or {})
+    images = list(result.get("images") or [])
+    first_image = images[0] if images else {}
+    return {
+        "id": job["id"],
+        "job_type": job["job_type"],
+        "status": job["status"],
+        "progress_pct": job["progress_pct"],
+        "images": images,
+        "primary_image_url": result.get("primary_image_url") or first_image.get("url"),
+        "thumbnail_url": result.get("thumbnail_url") or first_image.get("thumbnail_url"),
+        "model_used": result.get("model_used") or job["request_json"].get("model"),
+        "seed": result.get("seed"),
+        "duration_ms": result.get("duration_ms"),
+        "cost_gems": result.get("cost_gems", job["cost_gems"]),
+        "provider_job_id": job["provider_job_id"],
+        "error_message": job["error_message"],
+        "created_at": _isoformat(job["created_at"]),
+        "updated_at": _isoformat(job["updated_at"]),
+        "result": result,
+    }
+
+
+def _normalize_video_result(job: dict[str, Any]) -> dict[str, Any]:
+    result = dict(job.get("result_json") or {})
+    return {
+        "id": job["id"],
+        "job_type": job["job_type"],
+        "status": job["status"],
+        "progress_pct": job["progress_pct"],
+        "video_url": result.get("video_url"),
+        "thumbnail_url": result.get("thumbnail_url"),
+        "model_used": result.get("model_used") or job["request_json"].get("model"),
+        "duration_seconds": result.get("duration_seconds"),
+        "duration_ms": result.get("duration_ms"),
+        "cost_gems": result.get("cost_gems", job["cost_gems"]),
+        "provider_job_id": job["provider_job_id"],
+        "error_message": job["error_message"],
+        "created_at": _isoformat(job["created_at"]),
+        "updated_at": _isoformat(job["updated_at"]),
+        "result": result,
     }
 
 
@@ -723,6 +1074,19 @@ def _store_job_inputs(conn: Connection, job_id: str, payload: dict[str, Any]) ->
                 "created_at": now,
             }
             for url in payload["dataset_urls"]
+        )
+    source_image_url = payload.get("source_image_url")
+    if source_image_url:
+        rows.append(
+            {
+                "job_id": job_id,
+                "role": "source_image",
+                "uri": source_image_url,
+                "content_type": None,
+                "sha256": None,
+                "size_bytes": None,
+                "created_at": now,
+            }
         )
     if rows:
         conn.execute(insert(JOB_INPUTS), rows)
@@ -971,7 +1335,7 @@ def _sync_provider_capabilities(runtime: Runtime) -> None:
 
 
 def _requeue_unfinished_jobs(runtime: Runtime) -> None:
-    for job_kind in ("lora", "chat"):
+    for job_kind in ("lora", "chat", "image", "video"):
         runtime.redis.delete(_queue_name(runtime.settings, job_kind))
     with _connection(runtime) as conn:
         conn.execute(
@@ -980,9 +1344,9 @@ def _requeue_unfinished_jobs(runtime: Runtime) -> None:
             .values(status="queued", started_at=None, updated_at=_utcnow(), queue_position=None)
         )
         rows = conn.execute(select(JOBS).where(JOBS.c.status == "queued")).mappings().all()
-    grouped: dict[str, list[dict[str, Any]]] = {"lora": [], "chat": []}
+    grouped: dict[str, list[dict[str, Any]]] = {"lora": [], "chat": [], "image": [], "video": []}
     for row in rows:
-        grouped[row["job_kind"]].append(_row_to_dict(row))
+        grouped.setdefault(row["job_kind"], []).append(_row_to_dict(row))
     for job_kind, jobs in grouped.items():
         for index, job in enumerate(sorted(jobs, key=lambda item: item["created_at"]), start=1):
             _update_job(
@@ -1013,6 +1377,8 @@ def _initialize_runtime() -> Runtime:
         providers={
             "training.lora.local": LocalLoraTrainerProvider(),
             "chat.ollama": OllamaChatProvider(),
+            "image.selfhosted": SelfHostedImageProvider(),
+            "video.selfhosted": SelfHostedVideoProvider(),
         },
         stop_event=threading.Event(),
         threads=[],
@@ -1025,6 +1391,14 @@ def _initialize_runtime() -> Runtime:
         thread.start()
     for index in range(runtime.settings.chat_worker_count):
         thread = threading.Thread(target=_worker_loop, args=(runtime, "chat", index), daemon=True)
+        runtime.threads.append(thread)
+        thread.start()
+    for index in range(runtime.settings.image_worker_count):
+        thread = threading.Thread(target=_worker_loop, args=(runtime, "image", index), daemon=True)
+        runtime.threads.append(thread)
+        thread.start()
+    for index in range(runtime.settings.video_worker_count):
+        thread = threading.Thread(target=_worker_loop, args=(runtime, "video", index), daemon=True)
         runtime.threads.append(thread)
         thread.start()
     return runtime
@@ -1165,6 +1539,60 @@ def get_chat_job(job_id: str, request: Request) -> dict[str, Any]:
     _extract_auth_context(request)
     runtime = _runtime()
     return _normalize_chat_result(_fetch_job(runtime, job_id))
+
+
+@app.post("/v1/image/jobs", response_model=AcceptedJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def create_image_job(
+    payload: CreateImageJobRequest,
+    request: Request,
+    idempotency_key: str = Depends(_require_idempotency_key),
+) -> AcceptedJobResponse:
+    runtime = _runtime()
+    auth_context = _extract_auth_context(request)
+    job = _insert_job(
+        runtime,
+        job_kind="image",
+        job_type="generate",
+        provider_key="image.selfhosted",
+        auth_context=auth_context,
+        idempotency_key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    return _accepted_response(runtime, job)
+
+
+@app.get("/v1/image/jobs/{job_id}")
+def get_image_job(job_id: str, request: Request) -> dict[str, Any]:
+    _extract_auth_context(request)
+    runtime = _runtime()
+    return _normalize_image_result(_fetch_job(runtime, job_id))
+
+
+@app.post("/v1/video/jobs", response_model=AcceptedJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def create_video_job(
+    payload: CreateVideoJobRequest,
+    request: Request,
+    idempotency_key: str = Depends(_require_idempotency_key),
+) -> AcceptedJobResponse:
+    runtime = _runtime()
+    auth_context = _extract_auth_context(request)
+    job = _insert_job(
+        runtime,
+        job_kind="video",
+        job_type="generate",
+        provider_key="video.selfhosted",
+        auth_context=auth_context,
+        idempotency_key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    return _accepted_response(runtime, job)
+
+
+@app.get("/v1/video/jobs/{job_id}")
+def get_video_job(job_id: str, request: Request) -> dict[str, Any]:
+    _extract_auth_context(request)
+    runtime = _runtime()
+    return _normalize_video_result(_fetch_job(runtime, job_id))
 
 
 @app.get("/v1/providers")

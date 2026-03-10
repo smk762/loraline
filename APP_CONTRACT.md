@@ -294,9 +294,32 @@ The current scaffold expects these service-side settings:
 - `SELF_LORA_TRAINER_COMMAND`
 - `SELF_LORA_TRAINER_PROVIDER`
 - `SELF_LORA_IMAGE_LORA_COMMAND`
+- `SELF_LORA_IMAGE_LORA_BACKEND_MODE`
 - `SELF_LORA_IMAGE_LORA_BACKEND_COMMAND`
 - `SELF_LORA_VIDEO_LORA_COMMAND`
+- `SELF_LORA_VIDEO_LORA_BACKEND_MODE`
 - `SELF_LORA_VIDEO_LORA_BACKEND_COMMAND`
+- `IMAGE_BACKEND`
+- `IMAGE_API_BASE_URL`
+- `IMAGE_API_KEY`
+- `IMAGE_API_GENERATE_PATH`
+- `IMAGE_API_IMG2IMG_PATH`
+- `IMAGE_API_JOBS_PATH`
+- `IMAGE_API_TIMEOUT_MS`
+- `IMAGE_API_JOB_TIMEOUT_MS`
+- `IMAGE_API_JOB_POLL_INTERVAL_MS`
+- `IMAGE_API_AUTH_HEADER`
+- `IMAGE_API_AUTH_SCHEME`
+- `VIDEO_BACKEND`
+- `VIDEO_API_BASE_URL`
+- `VIDEO_API_KEY`
+- `VIDEO_API_GENERATE_PATH`
+- `VIDEO_API_JOBS_PATH`
+- `VIDEO_API_TIMEOUT_MS`
+- `VIDEO_API_JOB_TIMEOUT_MS`
+- `VIDEO_API_JOB_POLL_INTERVAL_MS`
+- `VIDEO_API_AUTH_HEADER`
+- `VIDEO_API_AUTH_SCHEME`
 - `SELF_LORA_CHAT_WRAPPER_COMMAND`
 - `SELF_LORA_TTS_WRAPPER_COMMAND`
 - `SELF_LORA_STT_WRAPPER_COMMAND`
@@ -355,17 +378,29 @@ SELF_LORA_TRAINER_PROVIDER=mock-image-lora
 Available scaffold providers today:
 
 - `mock-image-lora`: writes placeholder weights and preview artifacts for smoke tests.
-- `external-command`: delegates to the command in `SELF_LORA_IMAGE_LORA_COMMAND`.
+- `external-command`: backward-compatible alias that delegates to `SELF_LORA_IMAGE_LORA_COMMAND`.
+- `external-image-command`: delegates image LoRA jobs to `SELF_LORA_IMAGE_LORA_COMMAND`.
+- `external-video-command`: delegates video LoRA jobs to `SELF_LORA_VIDEO_LORA_COMMAND`.
 
 Example real-trainer delegation:
 
 ```text
-SELF_LORA_TRAINER_PROVIDER=external-command
+SELF_LORA_TRAINER_PROVIDER=external-image-command
 SELF_LORA_IMAGE_LORA_COMMAND=python3 /opt/self-lora/trainers/kohya_wrapper.py
 ```
 
 This keeps the execution-service contract stable while allowing different image,
 video, or remote-compute training backends to be swapped in later.
+
+Recommended modality hint for LoRA requests:
+
+```json
+{
+  "metadata": {
+    "modality": "video"
+  }
+}
+```
 
 ### Supporting Wrapper Toolkit
 
@@ -386,8 +421,10 @@ Recommended environment wiring:
 
 ```text
 SELF_LORA_IMAGE_LORA_COMMAND=python3 /srv/self-lora/trainers/image_lora_wrapper.py
+SELF_LORA_IMAGE_LORA_BACKEND_MODE=command
 SELF_LORA_IMAGE_LORA_BACKEND_COMMAND=python3 /opt/self-lora/trainers/kohya_wrapper.py
 SELF_LORA_VIDEO_LORA_COMMAND=python3 /srv/self-lora/trainers/video_lora_wrapper.py
+SELF_LORA_VIDEO_LORA_BACKEND_MODE=command
 SELF_LORA_VIDEO_LORA_BACKEND_COMMAND=python3 /opt/self-lora/trainers/video_lora_backend.py
 SELF_LORA_CHAT_WRAPPER_COMMAND=python3 /srv/self-lora/trainers/chat_ollama_wrapper.py
 SELF_LORA_TTS_WRAPPER_COMMAND=python3 /srv/self-lora/trainers/voice_tts_wrapper.py
