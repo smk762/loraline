@@ -22,6 +22,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from redis import Redis
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -43,8 +44,17 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
+from metrics import (
+    metrics_router,
+    observe_job_duration,
+    observe_job_enqueued,
+    observe_job_status,
+    observe_request,
+)
+
 LOG = logging.getLogger("self_lora")
 logging.basicConfig(level=os.getenv("SELF_LORA_LOG_LEVEL", "INFO"))
+TERMINAL_JOB_STATUSES = {"completed", "failed", "dead_letter", "cancelled"}
 
 
 def _utcnow() -> datetime:
@@ -895,6 +905,17 @@ def _queue_name(settings: Settings, job_kind: str) -> str:
     return f"{settings.redis_queue_prefix}:queue:{job_kind}"
 
 
+def _job_tier(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        tier = metadata.get("tier")
+        if tier is not None:
+            tier_value = str(tier).strip()
+            if tier_value:
+                return tier_value
+    return "standard"
+
+
 def _build_request_hash(job_kind: str, auth_scope_hash: str, payload: dict[str, Any]) -> str:
     return _hash_text(_json_dumps({"job_kind": job_kind, "auth_scope_hash": auth_scope_hash, "payload": payload}))
 
@@ -1249,18 +1270,43 @@ def _release_worker(runtime: Runtime, worker_id: str) -> None:
         conn.execute(delete(WORKER_LEASES).where(WORKER_LEASES.c.worker_id == worker_id))
 
 
+def _observe_terminal_job_metrics(
+    job_kind: str,
+    status: str,
+    submitted_at: datetime | None,
+    started_at: datetime | None,
+    finished_at: datetime | None,
+) -> None:
+    if status not in TERMINAL_JOB_STATUSES:
+        return
+    observe_job_status(job_kind, status)
+    if finished_at is None:
+        return
+    start_time = started_at or submitted_at or finished_at
+    duration_s = max((finished_at - start_time).total_seconds(), 0.0)
+    observe_job_duration(job_kind, status, duration_s)
+
+
 def _process_job(runtime: Runtime, job_id: str, queue_name: str, worker_id: str) -> None:
     job = _fetch_job(runtime, job_id)
     if job["status"] == "cancelled":
         return
     if job["cancel_requested"] and job["status"] == "queued":
-        _update_job(runtime, job_id, status="cancelled", finished_at=_utcnow(), queue_position=None)
+        updated = _update_job(runtime, job_id, status="cancelled", finished_at=_utcnow(), queue_position=None)
+        _observe_terminal_job_metrics(
+            updated["job_kind"],
+            updated["status"],
+            updated["submitted_at"],
+            updated["started_at"],
+            updated["finished_at"],
+        )
         return
     job = _update_job(runtime, job_id, status="processing", started_at=_utcnow(), progress_pct=5)
     provider = _provider_from_job(runtime, job)
     try:
         _heartbeat_worker(runtime, worker_id, queue_name, job_id)
         result = provider.execute(runtime, job)
+        finished_at = _utcnow() if result.status in TERMINAL_JOB_STATUSES else None
         result_json = dict(result.result)
         weights_url = _coalesce(
             result_json.get("weights_url"),
@@ -1281,14 +1327,21 @@ def _process_job(runtime: Runtime, job_id: str, queue_name: str, worker_id: str)
                     provider_metadata_json=result.provider_metadata,
                     error_message=result.error_message,
                     queue_position=None,
-                    finished_at=_utcnow() if result.status in {"completed", "failed", "dead_letter", "cancelled"} else None,
+                    finished_at=finished_at,
                     updated_at=_utcnow(),
                 )
             )
             _persist_artifacts(conn, job_id, result.artifacts)
+        _observe_terminal_job_metrics(
+            job["job_kind"],
+            result.status,
+            job["submitted_at"],
+            job["started_at"],
+            finished_at,
+        )
     except Exception as exc:
         LOG.exception("Worker failed processing job %s", job_id)
-        _update_job(
+        updated = _update_job(
             runtime,
             job_id,
             status="dead_letter",
@@ -1296,6 +1349,13 @@ def _process_job(runtime: Runtime, job_id: str, queue_name: str, worker_id: str)
             error_message=str(exc),
             queue_position=None,
             finished_at=_utcnow(),
+        )
+        _observe_terminal_job_metrics(
+            updated["job_kind"],
+            updated["status"],
+            updated["submitted_at"],
+            updated["started_at"],
+            updated["finished_at"],
         )
 
 
@@ -1429,6 +1489,25 @@ def _shutdown_runtime() -> None:
 app = FastAPI(title="Self LoRA Service", version="0.2.0")
 
 
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        path = request.url.path
+        if path in {"/metrics", "/health/live"}:
+            return await call_next(request)
+        started = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        finally:
+            observe_request(request.method, path, status_code, time.perf_counter() - started)
+
+
+app.add_middleware(MetricsMiddleware)
+app.include_router(metrics_router)
+
+
 @app.on_event("startup")
 def startup() -> None:
     _runtime()
@@ -1501,6 +1580,7 @@ def create_lora_job(
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
     )
+    observe_job_enqueued("lora", _job_tier(job["request_json"]), _queue_name(runtime.settings, "lora"))
     return _accepted_response(runtime, job)
 
 
@@ -1531,6 +1611,7 @@ def create_chat_job(
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
     )
+    observe_job_enqueued("chat", _job_tier(job["request_json"]), _queue_name(runtime.settings, "chat"))
     return _accepted_response(runtime, job)
 
 
@@ -1558,6 +1639,7 @@ def create_image_job(
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
     )
+    observe_job_enqueued("image", _job_tier(job["request_json"]), _queue_name(runtime.settings, "image"))
     return _accepted_response(runtime, job)
 
 
@@ -1585,6 +1667,7 @@ def create_video_job(
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
     )
+    observe_job_enqueued("video", _job_tier(job["request_json"]), _queue_name(runtime.settings, "video"))
     return _accepted_response(runtime, job)
 
 
@@ -1613,4 +1696,11 @@ def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
     updated = _update_job(runtime, job_id, cancel_requested=True)
     if updated["status"] == "queued":
         updated = _update_job(runtime, job_id, status="cancelled", finished_at=_utcnow())
+        _observe_terminal_job_metrics(
+            updated["job_kind"],
+            updated["status"],
+            updated["submitted_at"],
+            updated["started_at"],
+            updated["finished_at"],
+        )
     return {"id": updated["id"], "status": updated["status"]}

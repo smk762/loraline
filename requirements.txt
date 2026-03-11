@@ -6,3 +6,4 @@ psycopg[binary]
 redis
 boto3
 httpx
+prometheus-client>=0.20.0
