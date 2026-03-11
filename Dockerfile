@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY service.py .
+COPY metrics.py .
 COPY trainers ./trainers
 COPY scripts ./scripts
 
