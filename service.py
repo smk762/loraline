@@ -557,6 +557,8 @@ class LocalLoraTrainerProvider:
                 "output_dir": str(outputs_dir),
                 "metadata": request_metadata,
             }
+            dataset_manifest_hash = _dataset_manifest_hash(request_payload["dataset_urls"])
+            config_sha256 = _job_spec_hash(spec_payload)
             manifest_path.write_text(json.dumps(spec_payload, indent=2), encoding="utf-8")
             command = shlex.split(runtime.settings.trainer_command) + [
                 "--job-spec",
@@ -592,12 +594,27 @@ class LocalLoraTrainerProvider:
                 result_payload.get("model_path"),
             )
             preview_path = result_payload.get("preview_path")
+            weights_sha256: str | None = None
+            if weights_path:
+                weights_sha256 = _hash_file_prefixed(Path(weights_path))
             if weights_path:
                 artifacts.append(runtime.storage.upload_file(job, "weights", Path(weights_path)))
             if preview_path:
                 artifacts.append(runtime.storage.upload_file(job, "preview", Path(preview_path)))
             provider_metadata = dict(result_payload.get("metadata") or {})
             provider_metadata["downloaded_inputs"] = downloaded_inputs
+            provider_metadata["dataset_manifest_hash"] = dataset_manifest_hash
+            provider_metadata["weights_sha256"] = weights_sha256
+            provider_metadata["config_sha256"] = config_sha256
+            trainer_config_path = result_payload.get("config_path")
+            if trainer_config_path:
+                config_path = Path(trainer_config_path)
+                if config_path.exists():
+                    provider_metadata["config_sha256"] = _hash_file_prefixed(config_path)
+                else:
+                    LOG.warning("Trainer returned config_path that does not exist: %s", trainer_config_path)
+            if provider_metadata["weights_sha256"] is None:
+                LOG.warning("LoRA job %s completed without weights_sha256", job["id"])
             result = dict(result_payload.get("result") or {})
             if artifacts:
                 by_role = {artifact["role"]: artifact for artifact in artifacts}
@@ -889,6 +906,42 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_prefixed_from_bytes(value: bytes) -> str:
+    return f"sha256:{hashlib.sha256(value).hexdigest()}"
+
+
+def _sha256_prefixed_from_text(value: str) -> str:
+    return _sha256_prefixed_from_bytes(value.encode("utf-8"))
+
+
+def _hash_file_prefixed(path: Path) -> str:
+    return f"sha256:{_hash_file(path)}"
+
+
+def _dataset_manifest_hash(dataset_urls: list[str]) -> str:
+    canonical = json.dumps(sorted(dataset_urls), separators=(",", ":"), ensure_ascii=True)
+    return _sha256_prefixed_from_text(canonical)
+
+
+def _job_spec_hash(spec_payload: dict[str, Any]) -> str:
+    canonical = json.dumps(spec_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return _sha256_prefixed_from_text(canonical)
+
+
+def _deterministic_trainer_backend(job: dict[str, Any]) -> str:
+    modality = _resolve_lora_modality(dict(job.get("request_json") or {}))
+    if modality == "image":
+        return "onetrainer"
+    raise RuntimeError(f"No deterministic trainer_backend mapping for modality '{modality}'")
+
+
+def _resolve_trainer_backend(job: dict[str, Any], provider_metadata: dict[str, Any]) -> str:
+    explicit = str(provider_metadata.get("trainer_backend") or "").strip()
+    if explicit:
+        return explicit
+    return _deterministic_trainer_backend(job)
+
+
 def _download_url(url: str, destination_prefix: Path) -> Path:
     with httpx.Client(timeout=300) as client, client.stream("GET", url) as response:
         response.raise_for_status()
@@ -956,6 +1009,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
 def _normalize_lora_result(job: dict[str, Any]) -> dict[str, Any]:
     result = dict(job.get("result_json") or {})
+    provider_metadata = dict(job.get("provider_metadata_json") or {})
     weights_url = _coalesce(result.get("weights_url"), result.get("adapter_url"), result.get("model_url"))
     preview_url = result.get("preview_url")
     response = {
@@ -972,6 +1026,11 @@ def _normalize_lora_result(job: dict[str, Any]) -> dict[str, Any]:
         "estimated_duration_minutes": job["estimated_duration_minutes"],
         "cost_gems": job["cost_gems"],
         "provider_job_id": job["provider_job_id"],
+        "trainer_backend": provider_metadata.get("trainer_backend"),
+        "base_model": job.get("base_model"),
+        "dataset_manifest_hash": provider_metadata.get("dataset_manifest_hash"),
+        "weights_sha256": provider_metadata.get("weights_sha256"),
+        "config_sha256": provider_metadata.get("config_sha256"),
         "result": result,
     }
     return response
@@ -1308,6 +1367,15 @@ def _process_job(runtime: Runtime, job_id: str, queue_name: str, worker_id: str)
         result = provider.execute(runtime, job)
         finished_at = _utcnow() if result.status in TERMINAL_JOB_STATUSES else None
         result_json = dict(result.result)
+        provider_metadata = dict(result.provider_metadata or {})
+        if job["job_kind"] == "lora" and result.status == "completed":
+            provider_metadata["trainer_backend"] = _resolve_trainer_backend(job, provider_metadata)
+            if provider_metadata.get("dataset_manifest_hash") is None:
+                LOG.warning("LoRA job %s completed without dataset_manifest_hash", job_id)
+            if provider_metadata.get("weights_sha256") is None:
+                LOG.warning("LoRA job %s completed without weights_sha256", job_id)
+            if provider_metadata.get("config_sha256") is None:
+                LOG.warning("LoRA job %s completed without config_sha256", job_id)
         weights_url = _coalesce(
             result_json.get("weights_url"),
             result_json.get("adapter_url"),
@@ -1324,7 +1392,7 @@ def _process_job(runtime: Runtime, job_id: str, queue_name: str, worker_id: str)
                     progress_pct=result.progress_pct,
                     provider_job_id=result.provider_job_id,
                     result_json=result_json,
-                    provider_metadata_json=result.provider_metadata,
+                    provider_metadata_json=provider_metadata,
                     error_message=result.error_message,
                     queue_position=None,
                     finished_at=finished_at,

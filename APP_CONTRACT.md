@@ -164,8 +164,13 @@ Completed response example:
   "id": "provider-job-id",
   "status": "completed",
   "progress_pct": 100,
+  "trainer_backend": "onetrainer",
+  "base_model": "flux_dev",
   "preview_url": "https://cdn.example.com/loras/previews/abc.png",
   "weights_url": "s3://bucket/loras/user-1/model.safetensors",
+  "dataset_manifest_hash": "sha256:abc123...",
+  "weights_sha256": "sha256:def456...",
+  "config_sha256": "sha256:ghi789...",
   "updated_at": "2026-03-09T12:24:00Z"
 }
 ```
@@ -187,6 +192,11 @@ The app reads these optional fields when present:
 - `weights_url`
 - `adapter_url`
 - `model_url`
+- `trainer_backend`
+- `base_model`
+- `dataset_manifest_hash`
+- `weights_sha256`
+- `config_sha256`
 - `error_message`
 - `progress_pct`
 - `result.preview_url`
