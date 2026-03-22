@@ -138,6 +138,10 @@ class Settings:
     video_api_job_poll_interval_seconds: float
     video_api_auth_header: str
     video_api_auth_scheme: str
+    gothmog_url: str
+    gothmog_api_key: str
+    gothmog_image_backend: str
+    gothmog_video_backend: str
     s3_endpoint_url: str
     s3_access_key_id: str
     s3_secret_access_key: str
@@ -203,6 +207,10 @@ class Settings:
             / 1000.0,
             video_api_auth_header=os.getenv("VIDEO_API_AUTH_HEADER", "Authorization"),
             video_api_auth_scheme=os.getenv("VIDEO_API_AUTH_SCHEME", "Bearer"),
+            gothmog_url=os.getenv("GOTHMOG_URL", "").rstrip("/"),
+            gothmog_api_key=os.getenv("GOTHMOG_API_KEY", ""),
+            gothmog_image_backend=os.getenv("GOTHMOG_IMAGE_BACKEND", "imogen_flux"),
+            gothmog_video_backend=os.getenv("GOTHMOG_VIDEO_BACKEND", "vidita_wan22"),
             s3_endpoint_url=os.getenv("SELF_LORA_S3_ENDPOINT_URL") or os.getenv("S3_ENDPOINT_URL", ""),
             s3_access_key_id=os.getenv("SELF_LORA_S3_ACCESS_KEY_ID")
             or os.getenv("S3_ACCESS_KEY_ID", ""),
@@ -739,6 +747,34 @@ def _accepted_job_id(payload: dict[str, Any]) -> str:
     return str(job_id)
 
 
+def _poll_gothmog_job(
+    *,
+    gothmog_base: str,
+    job_id: str,
+    headers: dict[str, str],
+    poll_interval_seconds: float,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """Poll GET /v1/gpu/jobs/{job_id} until the job reaches a terminal state."""
+    started_at = time.monotonic()
+    poll_cfg = httpx.Timeout(connect=10.0, read=15.0, pool=10.0, write=5.0)
+    while True:
+        with httpx.Client(timeout=poll_cfg) as client:
+            response = client.get(f"{gothmog_base}/v1/gpu/jobs/{job_id}", headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+        status = payload.get("status", "")
+        if status == "completed":
+            return payload
+        if status in ("failed", "cancelled"):
+            raise RuntimeError(
+                f"GPU pool job {job_id} {status}: {payload.get('error') or 'unknown error'}"
+            )
+        if time.monotonic() - started_at > timeout_seconds:
+            raise TimeoutError(f"Timed out waiting for gothmog job {job_id}")
+        time.sleep(poll_interval_seconds)
+
+
 class SelfHostedImageProvider:
     capability = ProviderCapability(
         provider_key="image.selfhosted",
@@ -892,6 +928,136 @@ class SelfHostedVideoProvider:
                 "submit_path": runtime.settings.video_api_generate_path,
             },
             error_message=final_payload.get("error_message"),
+        )
+
+
+class GothmogImageProvider:
+    """Routes image generation through the gothmog GPU pool (/v1/gpu/submit)."""
+
+    capability = ProviderCapability(
+        provider_key="image.gothmog",
+        job_kind="image",
+        job_types=["generate"],
+        operations=["generate_image", "image_to_image"],
+        max_concurrency=1,
+        supports_cancel=True,
+        supports_poll=True,
+        metadata={"gothmog_url_env": "GOTHMOG_URL"},
+    )
+
+    def validate(self, payload: dict[str, Any], settings: Settings) -> None:
+        if not settings.gothmog_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="GOTHMOG_URL is not configured",
+            )
+
+    def execute(self, runtime: Runtime, job: dict[str, Any]) -> ProviderResult:
+        payload = dict(job["request_json"])
+        request_body = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"user_id", "companion_id", "metadata"}
+            and value is not None
+        }
+        s = runtime.settings
+        gothmog_base = s.gothmog_url
+        headers = {"Authorization": f"Bearer {s.gothmog_api_key}"}
+        submit_body: dict[str, Any] = {
+            "backend": s.gothmog_image_backend,
+            "payload": request_body,
+            "timeout": int(s.image_api_job_timeout_seconds),
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(f"{gothmog_base}/v1/gpu/submit", json=submit_body, headers=headers)
+            resp.raise_for_status()
+            provider_job_id = str(resp.json()["job_id"])
+        final_payload = _poll_gothmog_job(
+            gothmog_base=gothmog_base,
+            job_id=provider_job_id,
+            headers=headers,
+            poll_interval_seconds=s.image_api_job_poll_interval_seconds,
+            timeout_seconds=s.image_api_job_timeout_seconds,
+        )
+        result = dict(final_payload.get("result") or {})
+        images = list(result.get("images") or [])
+        if images:
+            result.setdefault("primary_image_url", images[0].get("url"))
+            result.setdefault("thumbnail_url", images[0].get("thumbnail_url"))
+        return ProviderResult(
+            status=final_payload.get("status", "completed"),
+            progress_pct=100,
+            result=result,
+            provider_job_id=provider_job_id,
+            provider_metadata={
+                "provider": self.capability.provider_key,
+                "upstream_job_id": provider_job_id,
+                "gothmog_backend": s.gothmog_image_backend,
+            },
+            error_message=final_payload.get("error"),
+        )
+
+
+class GothmogVideoProvider:
+    """Routes video generation through the gothmog GPU pool (/v1/gpu/submit)."""
+
+    capability = ProviderCapability(
+        provider_key="video.gothmog",
+        job_kind="video",
+        job_types=["generate"],
+        operations=["generate_video", "image_to_video"],
+        max_concurrency=1,
+        supports_cancel=True,
+        supports_poll=True,
+        metadata={"gothmog_url_env": "GOTHMOG_URL"},
+    )
+
+    def validate(self, payload: dict[str, Any], settings: Settings) -> None:
+        if not settings.gothmog_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="GOTHMOG_URL is not configured",
+            )
+
+    def execute(self, runtime: Runtime, job: dict[str, Any]) -> ProviderResult:
+        payload = dict(job["request_json"])
+        request_body = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"user_id", "companion_id", "metadata"}
+            and value is not None
+        }
+        s = runtime.settings
+        gothmog_base = s.gothmog_url
+        headers = {"Authorization": f"Bearer {s.gothmog_api_key}"}
+        submit_body: dict[str, Any] = {
+            "backend": s.gothmog_video_backend,
+            "payload": request_body,
+            "timeout": int(s.video_api_job_timeout_seconds),
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(f"{gothmog_base}/v1/gpu/submit", json=submit_body, headers=headers)
+            resp.raise_for_status()
+            provider_job_id = str(resp.json()["job_id"])
+        final_payload = _poll_gothmog_job(
+            gothmog_base=gothmog_base,
+            job_id=provider_job_id,
+            headers=headers,
+            poll_interval_seconds=s.video_api_job_poll_interval_seconds,
+            timeout_seconds=s.video_api_job_timeout_seconds,
+        )
+        result = dict(final_payload.get("result") or {})
+        return ProviderResult(
+            status=final_payload.get("status", "completed"),
+            progress_pct=100,
+            result=result,
+            provider_job_id=provider_job_id,
+            provider_metadata={
+                "provider": self.capability.provider_key,
+                "upstream_job_id": provider_job_id,
+                "gothmog_backend": s.gothmog_video_backend,
+            },
+            error_message=final_payload.get("error"),
         )
 
 
@@ -1507,6 +1673,8 @@ def _initialize_runtime() -> Runtime:
             "chat.ollama": OllamaChatProvider(),
             "image.selfhosted": SelfHostedImageProvider(),
             "video.selfhosted": SelfHostedVideoProvider(),
+            "image.gothmog": GothmogImageProvider(),
+            "video.gothmog": GothmogVideoProvider(),
         },
         stop_event=threading.Event(),
         threads=[],
@@ -1698,11 +1866,14 @@ def create_image_job(
 ) -> AcceptedJobResponse:
     runtime = _runtime()
     auth_context = _extract_auth_context(request)
+    image_provider_key = (
+        "image.gothmog" if runtime.settings.image_backend == "gothmog" else "image.selfhosted"
+    )
     job = _insert_job(
         runtime,
         job_kind="image",
         job_type="generate",
-        provider_key="image.selfhosted",
+        provider_key=image_provider_key,
         auth_context=auth_context,
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
@@ -1726,11 +1897,14 @@ def create_video_job(
 ) -> AcceptedJobResponse:
     runtime = _runtime()
     auth_context = _extract_auth_context(request)
+    video_provider_key = (
+        "video.gothmog" if runtime.settings.video_backend == "gothmog" else "video.selfhosted"
+    )
     job = _insert_job(
         runtime,
         job_kind="video",
         job_type="generate",
-        provider_key="video.selfhosted",
+        provider_key=video_provider_key,
         auth_context=auth_context,
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
