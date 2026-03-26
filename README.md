@@ -52,7 +52,6 @@ CI:
 
 - GitHub Actions runs Python syntax validation on `service.py`, `scripts/`, and `trainers/`
 - GitHub Actions performs a Docker build smoke test for the production image
-- GitHub Actions runs Trivy filesystem and container image scans for high and critical issues
 
 API capabilities:
 
