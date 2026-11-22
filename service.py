@@ -181,7 +181,7 @@ class Settings:
             default_chat_wait_seconds=int(os.getenv("SELF_LORA_DEFAULT_CHAT_WAIT_SECONDS", "5")),
             default_lora_cost_gems=int(os.getenv("SELF_LORA_DEFAULT_LORA_COST_GEMS", "0")),
             default_chat_cost_gems=int(os.getenv("SELF_LORA_DEFAULT_CHAT_COST_GEMS", "0")),
-            ollama_base_url=os.getenv("SELF_LORA_OLLAMA_BASE_URL", "http://192.168.1.109:11434").rstrip("/"),
+            ollama_base_url=os.getenv("SELF_LORA_OLLAMA_BASE_URL", "").strip().rstrip("/"),
             ollama_timeout_seconds=float(os.getenv("SELF_LORA_OLLAMA_TIMEOUT_SECONDS", "120")),
             trainer_command=os.getenv("SELF_LORA_TRAINER_COMMAND", "").strip(),
             image_backend=os.getenv("IMAGE_BACKEND", "").strip(),
@@ -658,6 +658,11 @@ class OllamaChatProvider:
     )
 
     def validate(self, payload: dict[str, Any], settings: Settings) -> None:
+        if not settings.ollama_base_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SELF_LORA_OLLAMA_BASE_URL is not configured",
+            )
         if not payload.get("messages"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -4,13 +4,20 @@ import os
 
 import httpx
 
-from common import parse_request_args, read_json, write_json
+from common import parse_request_args, read_json, required_base_url, write_json
 
 
 def main() -> int:
     args = parse_request_args("Ollama chat wrapper.")
     request_payload = read_json(args.request_path)
-    base_url = os.getenv("SELF_LORA_OLLAMA_BASE_URL", "http://192.168.1.109:11434").rstrip("/")
+    try:
+        base_url = required_base_url("SELF_LORA_OLLAMA_BASE_URL")
+    except RuntimeError as exc:
+        write_json(
+            args.result_path,
+            {"status": "dead_letter", "error_message": str(exc), "metadata": {"wrapper": "chat_ollama_wrapper"}},
+        )
+        return 1
     timeout_seconds = float(os.getenv("SELF_LORA_OLLAMA_TIMEOUT_SECONDS", "120"))
 
     body = {

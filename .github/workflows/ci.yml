@@ -26,6 +26,11 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall service.py scripts trainers
 
+      - name: Unit tests
+        run: |
+          python -m pip install httpx
+          python -m unittest discover -s tests -v
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest

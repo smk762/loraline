@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import time
@@ -91,6 +92,14 @@ def parse_job_args(description: str) -> argparse.Namespace:
     parser.add_argument("--job-spec", type=Path, required=True)
     parser.add_argument("--result-path", type=Path, required=True)
     return parser.parse_args()
+
+
+def required_base_url(env_name: str) -> str:
+    """The base URL in *env_name*, without a trailing slash; raises when it is unset (there is no built-in host)."""
+    value = os.getenv(env_name, "").strip().rstrip("/")
+    if not value:
+        raise RuntimeError(f"{env_name} is not configured")
+    return value
 
 
 def parse_request_args(description: str) -> argparse.Namespace:

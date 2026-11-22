@@ -5,13 +5,20 @@ import uuid
 
 import httpx
 
-from common import parse_request_args, poll_async_job, read_json, write_json
+from common import parse_request_args, poll_async_job, read_json, required_base_url, write_json
 
 
 def main() -> int:
     args = parse_request_args("Voice STT wrapper for tss-stack.")
     request_payload = read_json(args.request_path)
-    base_url = os.getenv("SELF_LORA_TSS_BASE_URL", "http://192.168.1.138:9001").rstrip("/")
+    try:
+        base_url = required_base_url("SELF_LORA_TSS_BASE_URL")
+    except RuntimeError as exc:
+        write_json(
+            args.result_path,
+            {"status": "dead_letter", "error_message": str(exc), "metadata": {"wrapper": "voice_stt_wrapper"}},
+        )
+        return 1
     timeout_seconds = float(os.getenv("SELF_LORA_TSS_TIMEOUT_SECONDS", "300"))
     poll_seconds = float(os.getenv("SELF_LORA_TSS_POLL_SECONDS", "1.5"))
     headers = {"Idempotency-Key": request_payload.get("idempotency_key") or str(uuid.uuid4())}
